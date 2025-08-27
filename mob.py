@@ -22,7 +22,6 @@ from datetime import timedelta
 import asyncio
 import subprocess
 import curses
-from dataclasses import dataclass
 from typing import Dict, Optional
 
 def main():
@@ -46,7 +45,6 @@ def main():
     args.names = [n.strip() for name in args.names for n in name.split(",") if n.strip()]
 
     def curses_main(stdscr):
-        curses.curs_set(1)
         stdscr.nodelay(1)
         stdscr.clear()
         
@@ -64,17 +62,6 @@ def main():
     
     curses.wrapper(curses_main)
 
-
-
-@dataclass
-class SessionState:
-    driver_index: int = 0
-    session_count: int = 0
-    driver_times: Optional[Dict[str, float]] = None
-    
-    def __post_init__(self):
-        if self.driver_times is None:
-            self.driver_times = {}
 
 
 class Display:
@@ -185,12 +172,10 @@ class MobManager:
         self.break_every = break_every
         self.voice_enabled = voice_enabled
         self.notifications_enabled = notifications_enabled
-        self.state = SessionState()
+        self.driver_index: int = 0
+        self.driver_times: Dict[str, int] = {name: 0 for name in names}
+        self.session_count: int = 0
         self.is_pomodoro = len(names) == 1
-        
-        # Initialize driver times
-        if not self.state.driver_times:
-            self.state.driver_times = {name: 0.0 for name in names}
         
         # Timer state variables
         self.is_paused = False
@@ -203,14 +188,14 @@ class MobManager:
                 self._show_main_screen()
                 await get_input(self.display)
                 
-                current_driver = self.names[self.state.driver_index]
-                next_driver = self.names[(self.state.driver_index + 1) % len(self.names)]
+                current_driver = self.names[self.driver_index]
+                next_driver = self.names[(self.driver_index + 1) % len(self.names)]
                 result = await self._countdown_timer(int(self.session_duration.total_seconds()), current_driver, next_driver)
                 
                 if result == "completed":
-                    await self._handle_session_complete(skipped=False)
-                    if self.state.session_count % self.break_every == 0 and self.break_duration > 0:
-                        next_driver_name = self.names[self.state.driver_index] if not self.is_pomodoro else None
+                    asyncio.create_task(self._handle_session_complete(skipped=False))
+                    if self.session_count % self.break_every == 0 and self.break_duration > 0:
+                        next_driver_name = self.names[self.driver_index] if not self.is_pomodoro else None
                         await self._break_timer(int(self.break_duration * 60), next_driver_name)
                     else:
                         self._show_transition_screen()
@@ -218,15 +203,14 @@ class MobManager:
                     await self._handle_session_complete(skipped=True)
                 elif result == "break":
                     if self.break_duration > 0:
-                        next_driver_name = self.names[self.state.driver_index] if not self.is_pomodoro else None
+                        next_driver_name = self.names[self.driver_index] if not self.is_pomodoro else None
                         await self._break_timer(int(self.break_duration * 60), next_driver_name)
                     else:
                         self.display.show(["Break requested but no break duration set!", "Continuing session..."])
                         await asyncio.sleep(2)
                         
         except (KeyboardInterrupt, asyncio.CancelledError):
-            self.display.show(["👋 Mob session ended. Thanks for coding together!"])
-            await asyncio.sleep(1)
+            print("👋 Mob session ended. Thanks for coding together!")
     
     def _show_main_screen(self):
         lines = []
@@ -239,7 +223,7 @@ class MobManager:
         else:
             lines.extend([
                 [("🚗 Mob Programming Session", curses.A_BOLD)],
-                [("Current Driver: ", 0), (self.names[self.state.driver_index], curses.A_BOLD)]
+                [("Current Driver: ", 0), (self.names[self.driver_index], curses.A_BOLD)]
             ])
         
         lines.append([("Session Duration: ", 0), (str(self.session_duration), curses.A_BOLD)])
@@ -260,34 +244,35 @@ class MobManager:
                 "Driver rotation:"
             ])
             for i, name in enumerate(self.names):
-                prefix = "→ " if i == self.state.driver_index else "  "
-                if i == self.state.driver_index:
-                    lines.append([(prefix, 0), (name, curses.A_BOLD)])
+                prefix = "→ " if i == self.driver_index else "  "
+                time = self.driver_times[name] if name in self.driver_times else 0
+                minutes, seconds = divmod(time, 60)
+                if i == self.driver_index:
+                    lines.append([(prefix, 0), (name, curses.A_BOLD), (f" {minutes:02d}:{seconds:02d}", 0)])
                 else:
-                    lines.append(f"{prefix}{name}")
+                    lines.append(f"{prefix}{name}:  {minutes:02d}:{seconds:02d}")
         
         lines.extend([
             "",
-            "Press any key to start the session timer..."
+            "Press any key to start session timer..."
         ])
         
         self.display.show(lines)
     
     async def _handle_session_complete(self, skipped: bool = False):
-        self.state.session_count += 1
-        self.state.driver_times = {} if not self.state.driver_times else self.state.driver_times
-        self.state.driver_times[self.names[self.state.driver_index]] += self.session_duration.total_seconds() / 60
+        self.session_count += 1
+        self.driver_index = (self.driver_index + 1) % len(self.names)
         
         if not skipped:
-            asyncio.create_task(NotificationManager.play_alert_sequence())
+            await NotificationManager.play_alert_sequence()
             if not self.is_pomodoro:
-                next_driver_name = self.names[(self.state.driver_index + 1) % len(self.names)]
-                NotificationManager.say(f"{next_driver_name} is next driver", self.voice_enabled)
+                next_driver_name = self.names[(self.driver_index + 1) % len(self.names)]
                 NotificationManager.show_notification(
                     "Mob Timer", 
                     f"Session complete! {next_driver_name} is next driver", 
                     notifications_enabled=self.notifications_enabled
                 )
+                NotificationManager.say(f"{next_driver_name} is next driver", self.voice_enabled)
             else:
                 NotificationManager.show_notification(
                     "Pomodoro Timer", 
@@ -295,23 +280,22 @@ class MobManager:
                     notifications_enabled=self.notifications_enabled
                 )
         
-        self.state.driver_index = (self.state.driver_index + 1) % len(self.names)
     
     def _show_transition_screen(self):
         lines = []
         if self.is_pomodoro:
             lines.extend([
-                f"🍅 Session {self.state.session_count} complete!",
+                f"🍅 Session {self.session_count} complete!",
             ])
             if self.break_duration > 0:
-                lines.append(f"Next break in {self.break_every - (self.state.session_count % self.break_every)} sessions")
+                lines.append(f"Next break in {self.break_every - (self.session_count % self.break_every)} sessions")
         else:
             lines.extend([
-                f"🔄 Session {self.state.session_count} complete!",
-                f"Next driver: {self.names[self.state.driver_index]}",
+                f"🔄 Session {self.session_count} complete!",
+                f"Next driver: {self.names[self.driver_index]}",
             ])
             if self.break_duration > 0:
-                lines.append(f"Next break in {self.break_every - (self.state.session_count % self.break_every)} sessions")
+                lines.append(f"Next break in {self.break_every - (self.session_count % self.break_every)} sessions")
         self.display.show(lines)
 
     async def _countdown_timer(self, duration_seconds: int, current_driver: str, next_driver: str):
@@ -363,7 +347,7 @@ class MobManager:
                 elif ch in (ord('p'), ord('P')):
                     if await confirm_action(self.display, "Pause session?", message_line):
                         self.is_paused = True
-                        self.pause_time = current_time
+                        self.pause_time = asyncio.get_event_loop().time()
                         resume_prompt = [
                             ("Session paused: press ", 0),
                             ("r", curses.A_BOLD),
@@ -412,11 +396,13 @@ class MobManager:
                     last_update = remaining
                     
                     if remaining <= 0 and not self.is_paused:
+                        self.driver_times[self.names[self.driver_index]] += duration_seconds
                         self.display.update_line(message_line, f"Session complete! Press any key to continue...")
                         return "completed"
                 
                 result = await handle_timer_input()
                 if result:
+                    self.driver_times[self.names[self.driver_index]] += (duration_seconds - remaining)
                     return result
                 
                 await asyncio.sleep(0.05)
