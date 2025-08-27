@@ -1,22 +1,27 @@
-"""Mob programming timer with async support and curses interface.
+"""
+Mob programming timer with async support and curses interface.
 
 Mob programming is a collaborative software development practice where multiple
 developers work together wth a single "screen". One person acts as the "driver"
-(typing the code or modifying configuration) while others act as "navigators" (providing guidance and review).
-This timer manages session rotation to ensure everyone stays engaged, while being flexible enough to
-handle breaks and skipping sessions.
+(typing the code or modifying configuration) while others act as "navigators"
+(providing guidance and review).
+
+This timer program manages session rotation to ensure everyone stays engaged,
+while being flexible enough to handle breaks and skipping sessions.
 
 It only uses the python standard library because it's meant to be a portable script 
 that I can send to collaborators. 
 
-It's also meant to be modifiable by the team based on workflow: often times, we'll want to perform
-some automation like commiting/pushing a git branch, but this typically varies greatly based on
-project. Or sometimes people have different preferences/needs for notifications and reminders.
+It's also meant to be modifiable by the team based on workflow: often, we'll want 
+to perform some automation like commiting/pushing a git branch or slack messaging, 
+but customization typically varies greatly based on project. Or sometimes people
+have different preferences/needs for notifications and reminders.
 
 I chose async instead of threads because I wanted to better understand python's async model.
 
 NOTE: sound, voice and banner notifications only supported on OSX!
 """
+
 import argparse
 from datetime import timedelta
 import asyncio
