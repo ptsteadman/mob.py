@@ -27,6 +27,7 @@ from datetime import timedelta
 import asyncio
 import subprocess
 import curses
+from curses import window
 from typing import Dict, Optional
 
 def main():
@@ -49,8 +50,8 @@ def main():
 
     args.names = [n.strip() for name in args.names for n in name.split(",") if n.strip()]
 
-    def curses_main(stdscr):
-        stdscr.nodelay(1)
+    def curses_main(stdscr: window):
+        stdscr.nodelay(True)
         stdscr.clear()
         
         display = Display(stdscr)
@@ -70,8 +71,8 @@ def main():
 
 
 class Display:
-    def __init__(self, stdscr):
-        self.stdscr = stdscr
+    def __init__(self, stdscr: window):
+        self.stdscr: window = stdscr
         
     def show(self, lines):
         self.stdscr.clear()
